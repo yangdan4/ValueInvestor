@@ -86,7 +86,11 @@ function Layout({ children }) {
         }}
       >
         <Toolbar />
-        <Box sx={{ overflow: 'auto', mt: 2 }}>
+        <Box sx={{ 
+          overflow: 'hidden',
+          mt: 2,
+          height: '100%'
+        }}>
           <List>
             {navigationItems.map((item) => (
               <ListItem
