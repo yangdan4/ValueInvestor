@@ -11,19 +11,14 @@ import {
   ListItemText,
   IconButton,
   useTheme,
-  Divider,
 } from '@mui/material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import DashboardIcon from '@mui/icons-material/Dashboard';
-import AnalyticsIcon from '@mui/icons-material/Analytics';
+import DescriptionIcon from '@mui/icons-material/Description';
 import CalculateIcon from '@mui/icons-material/Calculate';
-import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
-import FilterListIcon from '@mui/icons-material/FilterList';
 import NewspaperIcon from '@mui/icons-material/Newspaper';
-import ChecklistIcon from '@mui/icons-material/CheckBox';
-import WarningIcon from '@mui/icons-material/Warning';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 
 const drawerWidth = 280;
@@ -36,13 +31,9 @@ function Layout({ children }) {
 
   const navigationItems = [
     { title: 'Dashboard', path: '/', icon: <DashboardIcon /> },
-    { title: 'Stock Analysis', path: '/analysis', icon: <AnalyticsIcon /> },
+    { title: 'Financial Statements', path: '/financials', icon: <DescriptionIcon /> },
     { title: 'Valuation Models', path: '/valuation', icon: <CalculateIcon /> },
-    { title: 'Portfolio Tracker', path: '/portfolio', icon: <AccountBalanceIcon /> },
-    { title: 'Stock Screener', path: '/screener', icon: <FilterListIcon /> },
     { title: 'News & Research', path: '/news', icon: <NewspaperIcon /> },
-    { title: 'Investment Checklist', path: '/checklist', icon: <ChecklistIcon /> },
-    { title: 'Risk Assessment', path: '/risk', icon: <WarningIcon /> },
   ];
 
   return (

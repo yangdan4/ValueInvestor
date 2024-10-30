@@ -18,8 +18,9 @@ import RiskAnalysis from './RiskAnalysis';
 import QualityScore from './QualityScore';
 import GrowthAnalysis from './GrowthAnalysis';
 import CompetitorAnalysis from './CompetitorAnalysis';
+import News from './News';
 
-function StockDashboard() {
+function StockAnalysisDashboard() {
   const { stockData, loading, error } = useStock();
 
   return (
@@ -34,32 +35,18 @@ function StockDashboard() {
         )}
 
         {error && (
-          <Alert 
-            severity="error" 
-            sx={{ 
-              borderRadius: 4,
-              fontSize: '1.1rem',
-            }}
-          >
+          <Alert severity="error" sx={{ borderRadius: 4 }}>
             {error}
           </Alert>
         )}
 
         {!loading && !error && stockData && (
           <Stack spacing={4}>
-            <Paper 
-              elevation={0}
-              sx={{ 
-                p: 4,
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(108, 99, 255, 0.1)',
-              }}
-            >
+            <Paper elevation={0} sx={{ p: 4 }}>
               <Typography variant="h4" gutterBottom fontWeight={700}>
-                {stockData.overview.Name} ({stockData.overview.Symbol}) 📈
+                {stockData.overview.Name} ({stockData.overview.Symbol})
               </Typography>
-              <Typography variant="body1" color="textSecondary" sx={{ fontSize: '1.1rem' }}>
+              <Typography variant="body1" color="textSecondary">
                 {stockData.overview.Description}
               </Typography>
               <Box mt={2}>
@@ -84,17 +71,12 @@ function StockDashboard() {
             <RiskAnalysis />
             <FinancialStatements />
             <CompetitorAnalysis />
+            <News />
           </Stack>
         )}
 
         {!loading && !error && !stockData && (
-          <Alert 
-            severity="info" 
-            sx={{ 
-              borderRadius: 4,
-              fontSize: '1.1rem',
-            }}
-          >
+          <Alert severity="info" sx={{ borderRadius: 4 }}>
             Please select a stock to begin analysis
           </Alert>
         )}
@@ -103,4 +85,4 @@ function StockDashboard() {
   );
 }
 
-export default StockDashboard; 
+export default StockAnalysisDashboard; 

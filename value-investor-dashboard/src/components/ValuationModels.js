@@ -1,386 +1,220 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Box,
-  Paper,
-  Typography,
-  Grid,
   Card,
   CardContent,
-  Stack,
-  Tabs,
-  Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
+  Typography,
+  Grid,
+  CircularProgress,
   Alert,
-} from '@mui/material';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
   Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from 'recharts';
-import DCFValuation from './DCFValuation';
+} from '@mui/material';
 import { useStock } from '../contexts/StockContext';
+
 function ValuationModels() {
-  const { stockData } = useStock();
-  const [activeTab, setActiveTab] = useState(0);
+  const { stockData, loading, error } = useStock();
 
-  const calculateComparativeValuation = () => {
-    const metrics = {
-      peRatio: stockData.metrics.peRatioTTM,
-      pbRatio: stockData.metrics.pbRatioTTM,
-      evEbitda: stockData.metrics.enterpriseValueOverEBITDATTM,
-      priceSales: stockData.metrics.priceToSalesRatioTTM,
-      fcfYield: (stockData.cashFlow[0].freeCashFlow / stockData.overview.MarketCapitalization) * 100,
-    };
+  const calculateIntrinsicValue = () => {
+    if (!stockData?.income?.[0] || !stockData?.overview) return null;
 
-    const industryAvg = {
-      peRatio: 20, // Example values - should be fetched from industry data
-      pbRatio: 2.5,
-      evEbitda: 12,
-      priceSales: 2,
-      fcfYield: 5,
-    };
+    try {
+      const latestIncome = stockData.income[0];
+      const eps = parseFloat(stockData.overview.EPS) || 0;
+      const currentPrice = parseFloat(stockData.overview.Price) || 0;
+      
+      if (eps <= 0 || currentPrice <= 0) return null;
 
-    const impliedValues = {
-      peRatio: (industryAvg.peRatio / metrics.peRatio) * stockData.overview.Price,
-      pbRatio: (industryAvg.pbRatio / metrics.pbRatio) * stockData.overview.Price,
-      evEbitda: (industryAvg.evEbitda / metrics.evEbitda) * stockData.overview.Price,
-      priceSales: (industryAvg.priceSales / metrics.priceSales) * stockData.overview.Price,
-      fcfYield: (metrics.fcfYield / industryAvg.fcfYield) * stockData.overview.Price,
-    };
+      // Graham's Number (Modified for stability)
+      const bookValue = parseFloat(stockData.overview.BookValue) || 0;
+      const grahamValue = bookValue > 0 ? 
+        Math.sqrt(22.5 * Math.max(eps, 0) * bookValue) : 
+        eps * Math.sqrt(22.5);
 
-    return {
-      metrics,
-      industryAvg,
-      impliedValues,
-    };
+      // Lynch Value
+      const growthRate = calculateGrowthRate();
+      const lynchValue = growthRate > 0 ? 
+        (eps * (1 + growthRate) * Math.min(25, growthRate * 2)) : 
+        eps * 15; // Default P/E of 15 if no growth
+
+      // DCF Value
+      const fcf = calculateFreeCashFlow(latestIncome);
+      const dcfValue = fcf > 0 ? calculateSimplifiedDCF(fcf) : null;
+
+      // Calculate per-share values
+      const sharesOutstanding = parseFloat(stockData.overview.SharesOutstanding) || 1;
+      
+      return {
+        graham: grahamValue > 0 ? grahamValue : null,
+        lynch: lynchValue > 0 ? lynchValue : null,
+        dcf: dcfValue && dcfValue > 0 ? dcfValue / sharesOutstanding : null,
+        currentPrice
+      };
+    } catch (err) {
+      console.error('Error calculating intrinsic values:', err);
+      return null;
+    }
   };
 
-  const calculateGrahamValue = () => {
-    const eps = stockData.financials[0].eps;
-    const bookValue = stockData.balanceSheet[0].totalStockholdersEquity / 
-                     stockData.overview.SharesOutstanding;
-    const aaa_yield = 0.04; // Should be fetched from current market data
-
-    // Graham's Formula: √(22.5 * EPS * BookValue)
-    const intrinsicValue = Math.sqrt(22.5 * eps * bookValue);
+  const calculateGrowthRate = () => {
+    if (!stockData?.income || stockData.income.length < 2) return 0;
     
-    // Modified Graham Formula including bond yields
-    const modifiedValue = (eps * (7 + 1/aaa_yield) * bookValue * 1.5) / 3;
+    const revenues = stockData.income
+      .slice(0, 3) // Use last 3 years
+      .map(period => parseFloat(period.totalRevenue))
+      .filter(rev => !isNaN(rev) && rev > 0);
 
-    return {
-      eps,
-      bookValue,
-      intrinsicValue,
-      modifiedValue,
-    };
+    if (revenues.length < 2) return 0;
+
+    // Calculate average annual growth rate
+    const growthRates = [];
+    for (let i = 0; i < revenues.length - 1; i++) {
+      growthRates.push((revenues[i] - revenues[i + 1]) / revenues[i + 1]);
+    }
+
+    return (growthRates.reduce((a, b) => a + b, 0) / growthRates.length) || 0;
   };
 
-  const calculateEarningsPower = () => {
-    const averageEarnings = stockData.financials
-      .slice(0, 5)
-      .reduce((sum, year) => sum + year.netIncome, 0) / 5;
+  const calculateFreeCashFlow = (income) => {
+    if (!income?.operatingIncome) return 0;
     
-    const normalizedEPS = averageEarnings / stockData.overview.SharesOutstanding;
+    const operatingIncome = parseFloat(income.operatingIncome);
+    if (isNaN(operatingIncome) || operatingIncome <= 0) return 0;
     
-    const multipliers = [8, 10, 12, 15, 18]; // Conservative to aggressive multipliers
+    const taxRate = 0.21; // Assumed corporate tax rate
+    const depreciation = parseFloat(income.depreciation) || 0;
+    const capex = parseFloat(income.capitalExpenditures) || 0;
     
-    return {
-      normalizedEPS,
-      valuations: multipliers.map(mult => ({
-        multiplier: mult,
-        value: normalizedEPS * mult,
-      })),
-    };
+    return (operatingIncome * (1 - taxRate)) + depreciation - Math.abs(capex);
   };
 
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value);
+  const calculateSimplifiedDCF = (fcf) => {
+    if (fcf <= 0) return null;
+
+    const growthRate = Math.min(Math.max(calculateGrowthRate(), 0.02), 0.15); // Between 2% and 15%
+    const discountRate = 0.10; // 10% discount rate
+    const terminalGrowthRate = 0.02; // 2% terminal growth
+    const years = 5;
+
+    let presentValue = 0;
+    for (let i = 1; i <= years; i++) {
+      presentValue += fcf * Math.pow(1 + growthRate, i) / Math.pow(1 + discountRate, i);
+    }
+
+    const terminalValue = (fcf * Math.pow(1 + growthRate, years) * (1 + terminalGrowthRate)) /
+      (discountRate - terminalGrowthRate);
+    const terminalPV = terminalValue / Math.pow(1 + discountRate, years);
+
+    return presentValue + terminalPV;
   };
 
-  const renderComparativeValuation = () => {
-    const valuation = calculateComparativeValuation();
-    const currentPrice = stockData.overview.Price;
-
-    const chartData = Object.keys(valuation.metrics).map(key => ({
-      metric: key.replace(/([A-Z])/g, ' $1').trim(),
-      current: valuation.metrics[key],
-      industry: valuation.industryAvg[key],
-    }));
-
+  if (loading) {
     return (
-      <Stack spacing={3}>
-        <Card
-          elevation={0}
-          sx={{
-            background: 'rgba(255, 255, 255, 0.9)',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(108, 99, 255, 0.1)',
-          }}
-        >
-          <CardContent>
-            <Typography variant="h6" gutterBottom fontWeight={700}>
-              Comparative Metrics
-            </Typography>
-            <Box sx={{ height: 300 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="metric" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="current" name="Current" fill="#6C63FF" />
-                  <Bar dataKey="industry" name="Industry Avg" fill="#4ECDC4" />
-                </BarChart>
-              </ResponsiveContainer>
-            </Box>
-          </CardContent>
-        </Card>
-
-        <TableContainer component={Card}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Metric</TableCell>
-                <TableCell align="right">Current</TableCell>
-                <TableCell align="right">Industry Avg</TableCell>
-                <TableCell align="right">Implied Value</TableCell>
-                <TableCell align="right">Discount/Premium</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {Object.keys(valuation.metrics).map((key) => {
-                const impliedValue = valuation.impliedValues[key];
-                const premium = ((impliedValue / currentPrice) - 1) * 100;
-                
-                return (
-                  <TableRow key={key}>
-                    <TableCell>{key.replace(/([A-Z])/g, ' $1').trim()}</TableCell>
-                    <TableCell align="right">{valuation.metrics[key].toFixed(2)}</TableCell>
-                    <TableCell align="right">{valuation.industryAvg[key].toFixed(2)}</TableCell>
-                    <TableCell align="right">{formatCurrency(impliedValue)}</TableCell>
-                    <TableCell 
-                      align="right"
-                      sx={{ 
-                        color: premium > 0 ? 'success.main' : 'error.main',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {premium > 0 ? '+' : ''}{premium.toFixed(1)}%
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Stack>
+      <Box display="flex" justifyContent="center" my={4}>
+        <CircularProgress size={60} thickness={4} />
+      </Box>
     );
-  };
+  }
 
-  const renderGrahamValuation = () => {
-    const valuation = calculateGrahamValue();
-    const currentPrice = stockData.overview.Price;
-
+  if (error) {
     return (
-      <Stack spacing={3}>
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={6}>
-            <Card
-              elevation={0}
-              sx={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(108, 99, 255, 0.1)',
-              }}
-            >
-              <CardContent>
-                <Typography variant="h6" gutterBottom fontWeight={700}>
-                  Classic Graham Formula
-                </Typography>
-                <Typography variant="h4" color="primary" gutterBottom>
-                  {formatCurrency(valuation.intrinsicValue)}
-                </Typography>
-                <Alert 
-                  severity={valuation.intrinsicValue > currentPrice ? "success" : "warning"}
-                  sx={{ mt: 2 }}
-                >
-                  {valuation.intrinsicValue > currentPrice ? 
-                    "Stock appears undervalued" : 
-                    "Stock appears overvalued"}
-                </Alert>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          <Grid item xs={12} md={6}>
-            <Card
-              elevation={0}
-              sx={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(108, 99, 255, 0.1)',
-              }}
-            >
-              <CardContent>
-                <Typography variant="h6" gutterBottom fontWeight={700}>
-                  Modified Graham Formula
-                </Typography>
-                <Typography variant="h4" color="primary" gutterBottom>
-                  {formatCurrency(valuation.modifiedValue)}
-                </Typography>
-                <Alert 
-                  severity={valuation.modifiedValue > currentPrice ? "success" : "warning"}
-                  sx={{ mt: 2 }}
-                >
-                  {valuation.modifiedValue > currentPrice ? 
-                    "Stock appears undervalued" : 
-                    "Stock appears overvalued"}
-                </Alert>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-
-        <Card>
-          <CardContent>
-            <Typography variant="h6" gutterBottom fontWeight={700}>
-              Valuation Inputs
-            </Typography>
-            <TableContainer>
-              <Table>
-                <TableBody>
-                  <TableRow>
-                    <TableCell>EPS (TTM)</TableCell>
-                    <TableCell align="right">{formatCurrency(valuation.eps)}</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>Book Value per Share</TableCell>
-                    <TableCell align="right">{formatCurrency(valuation.bookValue)}</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell>Current Price</TableCell>
-                    <TableCell align="right">{formatCurrency(currentPrice)}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </CardContent>
-        </Card>
-      </Stack>
+      <Alert severity="error" sx={{ borderRadius: 4, fontSize: '1.1rem' }}>
+        {error}
+      </Alert>
     );
-  };
+  }
 
-  const renderEarningsPowerValuation = () => {
-    const valuation = calculateEarningsPower();
-    const currentPrice = stockData.overview.Price;
-
+  if (!stockData) {
     return (
-      <Stack spacing={3}>
-        <Card
-          elevation={0}
-          sx={{
-            background: 'rgba(255, 255, 255, 0.9)',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(108, 99, 255, 0.1)',
-          }}
-        >
-          <CardContent>
-            <Typography variant="h6" gutterBottom fontWeight={700}>
-              Normalized Earnings Power
-            </Typography>
-            <Typography variant="h4" color="primary" gutterBottom>
-              {formatCurrency(valuation.normalizedEPS)} per share
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Based on 5-year average earnings
-            </Typography>
-          </CardContent>
-        </Card>
-
-        <TableContainer component={Card}>
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableCell>Earnings Multiple</TableCell>
-                <TableCell align="right">Implied Value</TableCell>
-                <TableCell align="right">Discount/Premium</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {valuation.valuations.map(({ multiplier, value }) => {
-                const premium = ((value / currentPrice) - 1) * 100;
-                
-                return (
-                  <TableRow key={multiplier}>
-                    <TableCell>{multiplier}x</TableCell>
-                    <TableCell align="right">{formatCurrency(value)}</TableCell>
-                    <TableCell 
-                      align="right"
-                      sx={{ 
-                        color: premium > 0 ? 'success.main' : 'error.main',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {premium > 0 ? '+' : ''}{premium.toFixed(1)}%
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Stack>
+      <Alert severity="info" sx={{ borderRadius: 4, fontSize: '1.1rem' }}>
+        Please select a stock to view valuation models
+      </Alert>
     );
-  };
+  }
+
+  const valuations = calculateIntrinsicValue();
+
+  if (!valuations) {
+    return (
+      <Alert severity="warning" sx={{ borderRadius: 4, fontSize: '1.1rem' }}>
+        Unable to calculate valuations. Some required data may be missing.
+      </Alert>
+    );
+  }
 
   return (
-    <Stack spacing={4}>
-      <Paper
-        elevation={0}
-        sx={{
-          p: 4,
-          background: 'rgba(255, 255, 255, 0.9)',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(108, 99, 255, 0.1)',
-        }}
-      >
-        <Typography variant="h4" gutterBottom fontWeight={800}>
-          Valuation Analysis 💰
+    <Card
+      elevation={0}
+      sx={{
+        background: 'rgba(255, 255, 255, 0.9)',
+        backdropFilter: 'blur(10px)',
+        border: '1px solid rgba(108, 99, 255, 0.1)',
+      }}
+    >
+      <CardContent>
+        <Typography variant="h5" gutterBottom fontWeight={700}>
+          Valuation Models
         </Typography>
 
-        <Tabs
-          value={activeTab}
-          onChange={(e, newValue) => setActiveTab(newValue)}
-          sx={{ mb: 4 }}
-        >
-          <Tab label="DCF Valuation" />
-          <Tab label="Comparative" />
-          <Tab label="Graham" />
-          <Tab label="Earnings Power" />
-        </Tabs>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={4}>
+            <ValuationCard
+              title="Graham's Number"
+              value={valuations.graham.toFixed(2)}
+              upside={valuations.upside.graham}
+              description="Based on Benjamin Graham's formula considering EPS and Book Value"
+            />
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <ValuationCard
+              title="Lynch Value"
+              value={valuations.lynch.toFixed(2)}
+              upside={valuations.upside.lynch}
+              description="Based on Peter Lynch's PEG ratio approach"
+            />
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <ValuationCard
+              title="DCF Value"
+              value={valuations.dcf.toFixed(2)}
+              upside={valuations.upside.dcf}
+              description="Simplified Discounted Cash Flow analysis"
+            />
+          </Grid>
+        </Grid>
+      </CardContent>
+    </Card>
+  );
+}
 
-        {activeTab === 0 && <DCFValuation stockData={stockData} />}
-        {activeTab === 1 && renderComparativeValuation()}
-        {activeTab === 2 && renderGrahamValuation()}
-        {activeTab === 3 && renderEarningsPowerValuation()}
-      </Paper>
-    </Stack>
+function ValuationCard({ title, value, upside, description }) {
+  const currentPrice = parseFloat(value);
+  const upsideValue = parseFloat(upside);
+
+  return (
+    <Tooltip title={description} arrow placement="top">
+      <Box
+        sx={{
+          p: 2,
+          borderRadius: 2,
+          border: '1px solid rgba(108, 99, 255, 0.1)',
+          background: 'rgba(255, 255, 255, 0.5)',
+        }}
+      >
+        <Typography variant="subtitle1" fontWeight={600}>
+          {title}
+        </Typography>
+        <Typography variant="h4" color="primary" fontWeight={700}>
+          ${value}
+        </Typography>
+        <Typography
+          variant="body2"
+          color={upsideValue >= 0 ? 'success.main' : 'error.main'}
+          fontWeight={500}
+        >
+          {upsideValue >= 0 ? '↑' : '↓'} {Math.abs(upsideValue)}% {upsideValue >= 0 ? 'Upside' : 'Downside'}
+        </Typography>
+      </Box>
+    </Tooltip>
   );
 }
 

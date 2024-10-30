@@ -1,274 +1,255 @@
 import React from 'react';
 import {
   Box,
-  Paper,
-  Typography,
-  Grid,
   Card,
   CardContent,
-  Stack,
+  Typography,
+  Grid,
   LinearProgress,
-  Tooltip,
+  Stack,
+  CircularProgress,
+  Alert
 } from '@mui/material';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  ResponsiveContainer,
-} from 'recharts';
 import { useStock } from '../contexts/StockContext';
-function QualityScore() {
-  const { stockData } = useStock();
-  const calculateQualityMetrics = () => {
-    const financials = stockData.financials;
-    const balanceSheet = stockData.balanceSheet;
 
-    // Calculate key quality indicators
-    const profitabilityScore = calculateProfitabilityScore(financials);
-    const efficiencyScore = calculateEfficiencyScore(financials, balanceSheet);
-    const financialHealthScore = calculateFinancialHealthScore(balanceSheet);
-    const growthConsistencyScore = calculateGrowthConsistencyScore(financials);
-    const capitalAllocationScore = calculateCapitalAllocationScore(financials, balanceSheet);
+function QualityScore() {
+  const { stockData, loading, error } = useStock();
+
+  const calculateQualityMetrics = () => {
+    if (!stockData?.income || !stockData?.balance) {
+      return {
+        profitabilityScore: 0,
+        efficiencyScore: 0,
+        financialHealthScore: 0,
+        growthConsistencyScore: 0,
+        capitalAllocationScore: 0
+      };
+    }
+
+    const latestIncome = stockData.income[0] || {};
+    const latestBalance = stockData.balance[0] || {};
+
+    // Calculate profitability metrics
+    const profitabilityScore = calculateProfitabilityScore(latestIncome);
+    const efficiencyScore = calculateEfficiencyScore(latestIncome, latestBalance);
+    const financialHealthScore = calculateFinancialHealthScore(latestBalance);
+    const growthConsistencyScore = calculateGrowthConsistencyScore(stockData.income);
+    const capitalAllocationScore = calculateCapitalAllocationScore(stockData.income, stockData.balance);
 
     return {
       profitabilityScore,
       efficiencyScore,
       financialHealthScore,
       growthConsistencyScore,
-      capitalAllocationScore,
+      capitalAllocationScore
     };
   };
 
-  const calculateProfitabilityScore = (financials) => {
-    const grossMargin = (financials[0].grossProfit / financials[0].revenue) * 100;
-    const operatingMargin = (financials[0].operatingIncome / financials[0].revenue) * 100;
-    const netMargin = (financials[0].netIncome / financials[0].revenue) * 100;
+  const calculateProfitabilityScore = (income) => {
+    if (!income?.totalRevenue) return 0;
 
-    return (grossMargin + operatingMargin + netMargin) / 3;
+    const grossMargin = income.grossProfit && income.totalRevenue
+      ? (parseFloat(income.grossProfit) / parseFloat(income.totalRevenue)) * 100
+      : 0;
+
+    const operatingMargin = income.operatingIncome && income.totalRevenue
+      ? (parseFloat(income.operatingIncome) / parseFloat(income.totalRevenue)) * 100
+      : 0;
+
+    const netMargin = income.netIncome && income.totalRevenue
+      ? (parseFloat(income.netIncome) / parseFloat(income.totalRevenue)) * 100
+      : 0;
+
+    // Score based on margins (0-100)
+    return Math.min(
+      ((grossMargin / 40) + (operatingMargin / 20) + (netMargin / 15)) * 20,
+      100
+    );
   };
 
-  const calculateEfficiencyScore = (financials, balanceSheet) => {
-    const assetTurnover = financials[0].revenue / balanceSheet[0].totalAssets;
-    const inventoryTurnover = financials[0].costOfRevenue / balanceSheet[0].inventory;
-    
-    return ((assetTurnover / 2) + (inventoryTurnover / 10)) * 50;
+  const calculateEfficiencyScore = (income, balance) => {
+    if (!income?.totalRevenue || !balance?.totalAssets) return 0;
+
+    const assetTurnover = parseFloat(income.totalRevenue) / parseFloat(balance.totalAssets);
+    const receivablesTurnover = balance.currentNetReceivables
+      ? parseFloat(income.totalRevenue) / parseFloat(balance.currentNetReceivables)
+      : 0;
+
+    // Score based on turnover ratios (0-100)
+    return Math.min(
+      ((assetTurnover / 2) + (receivablesTurnover / 8)) * 50,
+      100
+    );
   };
 
-  const calculateFinancialHealthScore = (balanceSheet) => {
-    const currentRatio = balanceSheet[0].totalCurrentAssets / balanceSheet[0].totalCurrentLiabilities;
-    const debtToEquity = balanceSheet[0].totalDebt / balanceSheet[0].totalStockholdersEquity;
-    
-    const currentRatioScore = Math.min(currentRatio * 25, 50);
-    const debtScore = Math.max(50 - (debtToEquity * 25), 0);
-    
-    return (currentRatioScore + debtScore) / 2;
+  const calculateFinancialHealthScore = (balance) => {
+    if (!balance?.totalCurrentAssets || !balance?.totalCurrentLiabilities) return 0;
+
+    const currentRatio = parseFloat(balance.totalCurrentAssets) / parseFloat(balance.totalCurrentLiabilities);
+    const debtToEquity = balance.totalShareholderEquity && balance.totalLiabilities
+      ? parseFloat(balance.totalLiabilities) / parseFloat(balance.totalShareholderEquity)
+      : 0;
+
+    // Score based on financial ratios (0-100)
+    return Math.min(
+      ((currentRatio / 3) * 50) + (Math.max(0, (2 - debtToEquity) / 2) * 50),
+      100
+    );
   };
 
-  const calculateGrowthConsistencyScore = (financials) => {
-    const revenueGrowthRates = [];
-    const earningsGrowthRates = [];
+  const calculateGrowthConsistencyScore = (incomeStatements) => {
+    if (!incomeStatements || incomeStatements.length < 2) return 0;
 
-    for (let i = 1; i < financials.length; i++) {
-      const revGrowth = ((financials[i-1].revenue - financials[i].revenue) / financials[i].revenue) * 100;
-      const earnGrowth = ((financials[i-1].netIncome - financials[i].netIncome) / financials[i].netIncome) * 100;
-      
-      revenueGrowthRates.push(revGrowth);
-      earningsGrowthRates.push(earnGrowth);
+    const revenues = incomeStatements
+      .map(statement => parseFloat(statement.totalRevenue))
+      .filter(revenue => !isNaN(revenue));
+
+    if (revenues.length < 2) return 0;
+
+    // Calculate year-over-year growth rates
+    const growthRates = [];
+    for (let i = 1; i < revenues.length; i++) {
+      const growthRate = ((revenues[i-1] - revenues[i]) / revenues[i]) * 100;
+      growthRates.push(growthRate);
     }
 
-    const revStdDev = calculateStandardDeviation(revenueGrowthRates);
-    const earnStdDev = calculateStandardDeviation(earningsGrowthRates);
+    // Calculate growth consistency score based on standard deviation of growth rates
+    const avgGrowth = growthRates.reduce((a, b) => a + b, 0) / growthRates.length;
+    const variance = growthRates.reduce((a, b) => a + Math.pow(b - avgGrowth, 2), 0) / growthRates.length;
+    const stdDev = Math.sqrt(variance);
 
-    return Math.max(100 - ((revStdDev + earnStdDev) / 2), 0);
+    // Lower standard deviation = more consistent growth = higher score
+    return Math.min(Math.max(100 - (stdDev * 2), 0), 100);
   };
 
-  const calculateCapitalAllocationScore = (financials, balanceSheet) => {
-    const roic = (financials[0].operatingIncome * (1 - 0.21)) /
-                (balanceSheet[0].totalStockholdersEquity + balanceSheet[0].totalDebt - balanceSheet[0].cashAndCashEquivalents);
-    const payoutRatio = financials[0].dividendsPaid / financials[0].netIncome;
-    
-    const roicScore = Math.min(roic * 5, 50);
-    const payoutScore = Math.min((payoutRatio * 100) / 2, 50);
-    
-    return roicScore + payoutScore;
+  const calculateCapitalAllocationScore = (income, balance) => {
+    if (!income?.[0] || !balance?.[0]) return 0;
+
+    const latestIncome = income[0];
+    const latestBalance = balance[0];
+
+    const returnOnEquity = latestIncome.netIncome && latestBalance.totalShareholderEquity
+      ? (parseFloat(latestIncome.netIncome) / parseFloat(latestBalance.totalShareholderEquity)) * 100
+      : 0;
+
+    const returnOnAssets = latestIncome.netIncome && latestBalance.totalAssets
+      ? (parseFloat(latestIncome.netIncome) / parseFloat(latestBalance.totalAssets)) * 100
+      : 0;
+
+    // Score based on returns (0-100)
+    return Math.min(
+      (returnOnEquity / 20) * 50 + (returnOnAssets / 10) * 50,
+      100
+    );
   };
 
-  const calculateStandardDeviation = (values) => {
-    const mean = values.reduce((a, b) => a + b) / values.length;
-    const squareDiffs = values.map(value => Math.pow(value - mean, 2));
-    const avgSquareDiff = squareDiffs.reduce((a, b) => a + b) / squareDiffs.length;
-    return Math.sqrt(avgSquareDiff);
-  };
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" my={4}>
+        <CircularProgress size={60} thickness={4} />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert severity="error" sx={{ borderRadius: 4, fontSize: '1.1rem' }}>
+        {error}
+      </Alert>
+    );
+  }
+
+  if (!stockData) {
+    return (
+      <Alert severity="info" sx={{ borderRadius: 4, fontSize: '1.1rem' }}>
+        Please select a stock to view quality metrics
+      </Alert>
+    );
+  }
 
   const metrics = calculateQualityMetrics();
-
-  const overallScore = Math.round(
-    (metrics.profitabilityScore +
-     metrics.efficiencyScore +
-     metrics.financialHealthScore +
-     metrics.growthConsistencyScore +
-     metrics.capitalAllocationScore) / 5
-  );
-
-  const barData = [
-    { name: 'Profitability', score: metrics.profitabilityScore },
-    { name: 'Efficiency', score: metrics.efficiencyScore },
-    { name: 'Financial Health', score: metrics.financialHealthScore },
-    { name: 'Growth Consistency', score: metrics.growthConsistencyScore },
-    { name: 'Capital Allocation', score: metrics.capitalAllocationScore },
-  ];
+  const overallScore = Object.values(metrics).reduce((a, b) => a + b, 0) / 5;
 
   return (
-    <Stack spacing={4}>
-      <Paper
-        elevation={0}
-        sx={{
-          p: 4,
-          background: 'rgba(255, 255, 255, 0.9)',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(108, 99, 255, 0.1)',
-        }}
-      >
+    <Card
+      elevation={0}
+      sx={{
+        background: 'rgba(255, 255, 255, 0.9)',
+        backdropFilter: 'blur(10px)',
+        border: '1px solid rgba(108, 99, 255, 0.1)',
+      }}
+    >
+      <CardContent>
         <Typography variant="h5" gutterBottom fontWeight={700}>
           Quality Score Analysis
         </Typography>
 
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h3" color="primary" fontWeight={800} gutterBottom>
+            {Math.round(overallScore)}/100
+          </Typography>
+          <LinearProgress
+            variant="determinate"
+            value={overallScore}
+            sx={{
+              height: 10,
+              borderRadius: 5,
+              backgroundColor: 'rgba(108, 99, 255, 0.1)',
+              '& .MuiLinearProgress-bar': {
+                background: 'linear-gradient(45deg, #6C63FF 30%, #4ECDC4 90%)',
+              },
+            }}
+          />
+        </Box>
+
         <Grid container spacing={3}>
-          <Grid item xs={12} md={4}>
-            <Card
-              elevation={0}
-              sx={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(108, 99, 255, 0.1)',
-              }}
-            >
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Overall Quality Score
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h3" color="primary" fontWeight={800} sx={{ mr: 2 }}>
-                    {overallScore}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    / 100
-                  </Typography>
-                </Box>
-                <LinearProgress
-                  variant="determinate"
-                  value={overallScore}
-                  sx={{
-                    height: 10,
-                    borderRadius: 5,
-                    backgroundColor: 'rgba(108, 99, 255, 0.1)',
-                    '& .MuiLinearProgress-bar': {
-                      background: 'linear-gradient(45deg, #6C63FF 30%, #4ECDC4 90%)',
-                    },
-                  }}
-                />
-              </CardContent>
-            </Card>
-          </Grid>
-
-          <Grid item xs={12} md={8}>
-            <Card
-              elevation={0}
-              sx={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(108, 99, 255, 0.1)',
-                height: '100%',
-              }}
-            >
-              <CardContent>
-                <Typography variant="h6" gutterBottom fontWeight={700}>
-                  Quality Metrics Breakdown
-                </Typography>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={barData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis domain={[0, 100]} />
-                    <Bar
-                      dataKey="score"
-                      fill="#6C63FF"
-                      radius={[4, 4, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          <Grid item xs={12}>
-            <Card
-              elevation={0}
-              sx={{
-                background: 'rgba(255, 255, 255, 0.9)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(108, 99, 255, 0.1)',
-              }}
-            >
-              <CardContent>
-                <Typography variant="h6" gutterBottom fontWeight={700}>
-                  Detailed Metrics
-                </Typography>
-                <Grid container spacing={2}>
-                  {Object.entries(metrics).map(([key, value]) => (
-                    <Grid item xs={12} sm={6} md={4} key={key}>
-                      <Tooltip title={getMetricDescription(key)} arrow>
-                        <Box>
-                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                            {formatMetricName(key)}
-                          </Typography>
-                          <LinearProgress
-                            variant="determinate"
-                            value={value}
-                            sx={{
-                              height: 8,
-                              borderRadius: 4,
-                              backgroundColor: 'rgba(108, 99, 255, 0.1)',
-                              '& .MuiLinearProgress-bar': {
-                                background: 'linear-gradient(45deg, #6C63FF 30%, #4ECDC4 90%)',
-                              },
-                            }}
-                          />
-                          <Typography variant="body2" sx={{ mt: 0.5 }}>
-                            {Math.round(value)}/100
-                          </Typography>
-                        </Box>
-                      </Tooltip>
-                    </Grid>
-                  ))}
-                </Grid>
-              </CardContent>
-            </Card>
-          </Grid>
+          {Object.entries(metrics).map(([key, value]) => (
+            <Grid item xs={12} sm={6} key={key}>
+              <QualityMetricCard
+                title={key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                value={Math.round(value)}
+              />
+            </Grid>
+          ))}
         </Grid>
-      </Paper>
-    </Stack>
+      </CardContent>
+    </Card>
   );
 }
 
-const formatMetricName = (key) => {
-  return key
-    .replace('Score', '')
-    .split(/(?=[A-Z])/)
-    .join(' ');
-};
-
-const getMetricDescription = (key) => {
-  const descriptions = {
-    profitabilityScore: 'Measures the company\'s ability to generate profits from its operations',
-    efficiencyScore: 'Evaluates how effectively the company uses its assets and resources',
-    financialHealthScore: 'Assesses the company\'s financial stability and debt management',
-    growthConsistencyScore: 'Measures the stability and predictability of growth over time',
-    capitalAllocationScore: 'Evaluates how well management deploys capital for future growth',
-  };
-  return descriptions[key];
-};
+function QualityMetricCard({ title, value }) {
+  return (
+    <Box
+      sx={{
+        p: 2,
+        borderRadius: 2,
+        border: '1px solid rgba(108, 99, 255, 0.1)',
+        background: 'rgba(255, 255, 255, 0.5)',
+      }}
+    >
+      <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+        {title}
+      </Typography>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Typography variant="h5" color="primary" fontWeight={700}>
+          {value}/100
+        </Typography>
+        <LinearProgress
+          variant="determinate"
+          value={value}
+          sx={{
+            flex: 1,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: 'rgba(108, 99, 255, 0.1)',
+            '& .MuiLinearProgress-bar': {
+              background: 'linear-gradient(45deg, #6C63FF 30%, #4ECDC4 90%)',
+            },
+          }}
+        />
+      </Stack>
+    </Box>
+  );
+}
 
 export default QualityScore;
